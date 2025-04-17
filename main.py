@@ -10,12 +10,10 @@ from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.types import (
     ChannelParticipantsSearch, UserStatusRecently,
     UserStatusOnline, ChannelParticipantsAdmins,
-    MessageService, Message
+    MessageService, Message, User
 )
-import os
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-
 DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
 
 def load_config():
@@ -117,6 +115,8 @@ async def filter_users(client, users, spammer_ids):
     print("⚡ Фильтрация по активности и ролям...")
     filtered = []
     for user in tqdm(users, desc="Фильтруем"):
+        if not isinstance(user, User):
+            continue
         if user.bot or user.id in spammer_ids:
             continue
         if not is_active(user):
@@ -152,7 +152,6 @@ async def main():
     project_name = input("\U0001F4C2 Введите название проекта: ").strip()
     output_folder = create_output_folder(project_name)
 
-    # Запросы для фильтров и источников
     use_participants = input("Собирать участников из вкладки 'Участники' (да/нет)? ").strip().lower() == 'да'
     use_messages = input("Собирать пользователей из сообщений (да/нет)? ").strip().lower() == 'да'
     use_comments = input("Собирать пользователей из комментариев (да/нет)? ").strip().lower() == 'да'
