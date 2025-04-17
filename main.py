@@ -12,23 +12,15 @@ from telethon.tl.types import (
     UserStatusOnline, ChannelParticipantsAdmins,
     MessageService, Message, User
 )
+from telethon import TelegramClient, events
+from telethon.tl.types import PeerUser
 
-DOWNLOADS_PATH = os.path.expanduser("~/downloads")
+DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
 
 def load_config():
     try:
         with open("config.json", "r") as f:
-            config = json.load(f)
-            config["project_link"] = os.getenv("PROJECT_LINK", config.get("project_link", ""))
-            config["project_name"] = os.getenv("PROJECT_NAME", config.get("project_name", "project"))
-            config["use_participants"] = os.getenv("USE_PARTICIPANTS", config.get("use_participants", "да")).lower() == "да"
-            config["use_messages"] = os.getenv("USE_MESSAGES", config.get("use_messages", "да")).lower() == "да"
-            config["use_comments"] = os.getenv("USE_COMMENTS", config.get("use_comments", "да")).lower() == "да"
-            config["message_limit"] = int(os.getenv("MESSAGE_LIMIT", config.get("message_limit", 500)))
-            config["api_id"] = int(os.getenv("API_ID", config.get("api_id")))
-            config["api_hash"] = os.getenv("API_HASH", config.get("api_hash"))
-            config["phone_number"] = os.getenv("PHONE_NUMBER", config.get("phone_number"))
-            return config
+            return json.load(f)
     except Exception as e:
         print(f"Ошибка при загрузке config.json: {e}")
         exit(1)
@@ -42,7 +34,7 @@ def save_to_csv(users, folder_path):
     chunks = [users[i:i+50] for i in range(0, len(users), 50)]
     for idx, chunk in enumerate(chunks, 1):
         filename = os.path.join(folder_path, f"users_part_{idx}.csv")
-        with open(filename, "w", newline="", encoding="utf-8") as f:
+        with open(filename, "w", newline='', encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["username"])
             for user in chunk:
@@ -155,47 +147,89 @@ async def detect_spammers(client, entity, message_limit):
     spammers = {uid for (uid, _), count in msg_counts.items() if count > 2}
     return spammers
 
-async def main():
+async def main(event):
     config = load_config()
-    project_link = config["project_link"]
-    project_name = config["project_name"]
-    output_folder = create_output_folder(project_name)
+
+    bot = await event.client.get_me()
+
+    # Запросы через бота
+    await event.respond("Введите ссылку или username Telegram-группы: ")
+    project_link = await event.client.wait_for_message(from_user=bot.id)
+
+    await event.respond("Введите название проекта: ")
+    project_name = await event.client.wait_for_message(from_user=bot.id)
+
+    await event.respond("Собирать участников из вкладки 'Участники' (да/нет)?")
+    use_participants = await event.client.wait_for_message(from_user=bot.id)
+
+    await event.respond("Собирать пользователей из сообщений (да/нет)?")
+    use_messages = await event.client.wait_for_message(from_user=bot.id)
+
+    await event.respond("Собирать пользователей из комментариев (да/нет)?")
+    use_comments = await event.client.wait_for_message(from_user=bot.id)
+
+    await event.respond("Введите количество сообщений для анализа: ")
+    message_limit = int(await event.client.wait_for_message(from_user=bot.id))
+
+    output_folder = create_output_folder(project_name.text.strip())
 
     client = TelegramClient("session", config["api_id"], config["api_hash"])
+
     try:
         await client.start(config["phone_number"])
-        entity = await client.get_entity(project_link)
+        entity = await client.get_entity(project_link.text.strip())
+
         users = []
 
-        if config["use_participants"]:
+        if use_participants.text.strip().lower() == 'да':
             try:
                 users += await get_participants(client, entity)
             except Exception as e:
                 save_error_log(output_folder, f"GetParticipantsRequest error: {e}")
 
-        if config["use_messages"]:
+        if use_messages.text.strip().lower() == 'да':
             try:
-                users += await get_users_from_messages(client, entity, config["message_limit"])
+                users += await get_users_from_messages(client, entity, message_limit)
             except Exception as e:
                 save_error_log(output_folder, f"iter_messages error: {e}")
 
-        if config["use_comments"]:
+        if use_comments.text.strip().lower() == 'да':
             try:
                 users += await get_users_from_comments(client, entity)
             except Exception as e:
                 save_error_log(output_folder, f"comments error: {e}")
 
         print(f"📦 Всего собранных пользователей: {len(users)}")
-        spammer_ids = await detect_spammers(client, entity, config["message_limit"])
+
+        spammer_ids = await detect_spammers(client, entity, message_limit)
         final_usernames = await filter_users(client, users, spammer_ids)
+
         save_to_csv(final_usernames, output_folder)
         print(f"✅ Сохранено {len(final_usernames)} username в: {output_folder}")
 
     except Exception as e:
         save_error_log(output_folder, f"Critical error: {e}")
         print(f"❌ Ошибка: {e}")
+
     finally:
         await client.disconnect()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# Настройка бота
+from telethon import TelegramClient, events
+import os
+
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
+@client.on(events.NewMessage(pattern="/start"))
+async def start(event):
+    await event.respond("Привет! Давай начнем собирать участников для проекта. Пожалуйста, следуй инструкциям.")
+
+@client.on(events.NewMessage())
+async def handler(event):
+    await main(event)
+
+client.run_until_disconnected()
