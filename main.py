@@ -14,6 +14,7 @@ from telethon.tl.types import (
     UserStatusOnline, ChannelParticipantsAdmins,
     MessageService, Message, User
 )
+from telethon import TelegramClient, events
 
 # Запускаем простой HTTP сервер для Render
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -29,9 +30,6 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
-
-# Токен бота берется из переменной окружения
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Функция для загрузки данных из config.json
 def load_config():
@@ -175,14 +173,15 @@ async def detect_spammers(client, entity, message_limit):
 
 # Основной процесс
 async def main():
-    # Запрашиваем у пользователя все необходимые данные
-    api_id = input("Введите api_id: ").strip()
-    api_hash = input("Введите api_hash: ").strip()
-    phone_number = input("Введите номер телефона: ").strip()
-    project_link = input("Введите ссылку или username Telegram-группы: ").strip()
-    project_name = input("Введите название проекта: ").strip()
+    # Загружаем конфигурацию из config.json
+    config = load_config()
+    api_id = config["api_id"]
+    api_hash = config["api_hash"]
+    phone_number = config["phone_number"]
+    project_link = config["project_link"]
+    project_name = config["project_name"]
 
-    # Создаем клиент с использованием данных пользователя
+    # Создаем клиент с использованием данных из config.json
     client = TelegramClient("session", api_id, api_hash)
 
     output_folder = create_output_folder(project_name)
