@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: telegram-filter-bot
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: ./start.sh
+    envVars:
+      - key: BOT_TOKEN
+        value: 7393240724:AAGS92BpB2TD1Vdu48cXmpHXbbuWPbFgqSM
