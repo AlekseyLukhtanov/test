@@ -175,9 +175,16 @@ async def detect_spammers(client, entity, message_limit):
 
 # Основной процесс
 async def main():
-    config = load_config()
-    project_link = input("\U0001F517 Введите ссылку или username Telegram-группы: ").strip()
-    project_name = input("\U0001F4C2 Введите название проекта: ").strip()
+    # Запрашиваем у пользователя все необходимые данные
+    api_id = input("Введите api_id: ").strip()
+    api_hash = input("Введите api_hash: ").strip()
+    phone_number = input("Введите номер телефона: ").strip()
+    project_link = input("Введите ссылку или username Telegram-группы: ").strip()
+    project_name = input("Введите название проекта: ").strip()
+
+    # Создаем клиент с использованием данных пользователя
+    client = TelegramClient("session", api_id, api_hash)
+
     output_folder = create_output_folder(project_name)
 
     use_participants = input("Собирать участников из вкладки 'Участники' (да/нет)? ").strip().lower() == 'да'
@@ -185,11 +192,8 @@ async def main():
     use_comments = input("Собирать пользователей из комментариев (да/нет)? ").strip().lower() == 'да'
     message_limit = int(input("Введите количество сообщений для анализа: ").strip())
 
-    # Создаем клиент с использованием данных из config.json
-    client = TelegramClient("session", config["api_id"], config["api_hash"])
-
     try:
-        await client.start(config["phone_number"])
+        await client.start(phone_number)
         entity = await client.get_entity(project_link)
 
         users = []
