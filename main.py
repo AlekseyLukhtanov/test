@@ -3,6 +3,8 @@ import json
 import csv
 import asyncio
 import datetime
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from tqdm.asyncio import tqdm
 from telethon.sync import TelegramClient
 from telethon.tl.functions.channels import GetParticipantsRequest
@@ -12,11 +14,26 @@ from telethon.tl.types import (
     UserStatusOnline, ChannelParticipantsAdmins,
     MessageService, Message, User
 )
-from telethon import TelegramClient, events
-from telethon.tl.types import PeerUser
+
+# Запускаем простой HTTP сервер для Render
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_server():
+    server = HTTPServer(('0.0.0.0', 10000), SimpleHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
 
+# Токен бота берется из переменной окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# Функция для загрузки данных из config.json
 def load_config():
     try:
         with open("config.json", "r") as f:
@@ -25,11 +42,13 @@ def load_config():
         print(f"Ошибка при загрузке config.json: {e}")
         exit(1)
 
+# Функция для создания папки для проекта
 def create_output_folder(project_name):
     folder_path = os.path.join(DOWNLOADS_PATH, project_name)
     os.makedirs(folder_path, exist_ok=True)
     return folder_path
 
+# Функция для сохранения данных в CSV
 def save_to_csv(users, folder_path):
     chunks = [users[i:i+50] for i in range(0, len(users), 50)]
     for idx, chunk in enumerate(chunks, 1):
@@ -40,10 +59,12 @@ def save_to_csv(users, folder_path):
             for user in chunk:
                 writer.writerow([user])
 
+# Функция для записи ошибок в лог
 def save_error_log(folder_path, message):
     with open(os.path.join(folder_path, "errors.log"), "a", encoding="utf-8") as f:
         f.write(message + "\n")
 
+# Проверка активности пользователя
 def is_active(user):
     status = user.status
     if isinstance(status, (UserStatusRecently, UserStatusOnline)):
@@ -53,6 +74,7 @@ def is_active(user):
         return delta.days <= 2
     return False
 
+# Получение участников группы
 async def get_participants(client, entity):
     print("\U0001F4E5 Получаем участников через GetParticipantsRequest...")
     participants = []
@@ -77,6 +99,7 @@ async def get_participants(client, entity):
         raise e
     return participants
 
+# Получение пользователей из истории сообщений
 async def get_users_from_messages(client, entity, message_limit):
     print(f"\U0001F4AC Собираем пользователей из истории сообщений (до {message_limit} сообщений)...")
     user_ids = set()
@@ -94,6 +117,7 @@ async def get_users_from_messages(client, entity, message_limit):
         await asyncio.sleep(0.1)
     return users
 
+# Получение пользователей из комментариев
 async def get_users_from_comments(client, entity):
     print("\U0001F5E8️ Собираем пользователей из комментариев (если есть)...")
     users = []
@@ -112,6 +136,7 @@ async def get_users_from_comments(client, entity):
         print("⚠️ Комментарии не обнаружены или не поддерживаются.")
     return users
 
+# Фильтрация пользователей по активности и ролям
 async def filter_users(client, users, spammer_ids):
     print("⚡ Фильтрация по активности и ролям...")
     filtered = []
@@ -134,6 +159,7 @@ async def filter_users(client, users, spammer_ids):
         await asyncio.sleep(0.05)
     return list(set(filtered))
 
+# Определение спамеров
 async def detect_spammers(client, entity, message_limit):
     print(f"\U0001F9E0 Определяем спамеров (по {message_limit} сообщениям)...")
     cutoff_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=40)
@@ -147,53 +173,40 @@ async def detect_spammers(client, entity, message_limit):
     spammers = {uid for (uid, _), count in msg_counts.items() if count > 2}
     return spammers
 
-async def main(event):
+# Основной процесс
+async def main():
     config = load_config()
+    project_link = input("\U0001F517 Введите ссылку или username Telegram-группы: ").strip()
+    project_name = input("\U0001F4C2 Введите название проекта: ").strip()
+    output_folder = create_output_folder(project_name)
 
-    bot = await event.client.get_me()
+    use_participants = input("Собирать участников из вкладки 'Участники' (да/нет)? ").strip().lower() == 'да'
+    use_messages = input("Собирать пользователей из сообщений (да/нет)? ").strip().lower() == 'да'
+    use_comments = input("Собирать пользователей из комментариев (да/нет)? ").strip().lower() == 'да'
+    message_limit = int(input("Введите количество сообщений для анализа: ").strip())
 
-    # Запросы через бота
-    await event.respond("Введите ссылку или username Telegram-группы: ")
-    project_link = await event.client.wait_for_message(from_user=bot.id)
-
-    await event.respond("Введите название проекта: ")
-    project_name = await event.client.wait_for_message(from_user=bot.id)
-
-    await event.respond("Собирать участников из вкладки 'Участники' (да/нет)?")
-    use_participants = await event.client.wait_for_message(from_user=bot.id)
-
-    await event.respond("Собирать пользователей из сообщений (да/нет)?")
-    use_messages = await event.client.wait_for_message(from_user=bot.id)
-
-    await event.respond("Собирать пользователей из комментариев (да/нет)?")
-    use_comments = await event.client.wait_for_message(from_user=bot.id)
-
-    await event.respond("Введите количество сообщений для анализа: ")
-    message_limit = int(await event.client.wait_for_message(from_user=bot.id))
-
-    output_folder = create_output_folder(project_name.text.strip())
-
+    # Создаем клиент с использованием данных из config.json
     client = TelegramClient("session", config["api_id"], config["api_hash"])
 
     try:
         await client.start(config["phone_number"])
-        entity = await client.get_entity(project_link.text.strip())
+        entity = await client.get_entity(project_link)
 
         users = []
 
-        if use_participants.text.strip().lower() == 'да':
+        if use_participants:
             try:
                 users += await get_participants(client, entity)
             except Exception as e:
                 save_error_log(output_folder, f"GetParticipantsRequest error: {e}")
 
-        if use_messages.text.strip().lower() == 'да':
+        if use_messages:
             try:
                 users += await get_users_from_messages(client, entity, message_limit)
             except Exception as e:
                 save_error_log(output_folder, f"iter_messages error: {e}")
 
-        if use_comments.text.strip().lower() == 'да':
+        if use_comments:
             try:
                 users += await get_users_from_comments(client, entity)
             except Exception as e:
@@ -214,22 +227,5 @@ async def main(event):
     finally:
         await client.disconnect()
 
-# Настройка бота
-from telethon import TelegramClient, events
-import os
-
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-
-@client.on(events.NewMessage(pattern="/start"))
-async def start(event):
-    await event.respond("Привет! Давай начнем собирать участников для проекта. Пожалуйста, следуй инструкциям.")
-
-@client.on(events.NewMessage())
-async def handler(event):
-    await main(event)
-
-client.run_until_disconnected()
+if __name__ == "__main__":
+    asyncio.run(main())
