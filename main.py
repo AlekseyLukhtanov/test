@@ -13,13 +13,22 @@ from telethon.tl.types import (
     MessageService, Message, User
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DOWNLOADS_PATH = os.path.expanduser("~/Downloads")
+DOWNLOADS_PATH = os.path.expanduser("~/downloads")
 
 def load_config():
     try:
         with open("config.json", "r") as f:
-            return json.load(f)
+            config = json.load(f)
+            config["project_link"] = os.getenv("PROJECT_LINK", config.get("project_link", ""))
+            config["project_name"] = os.getenv("PROJECT_NAME", config.get("project_name", "project"))
+            config["use_participants"] = os.getenv("USE_PARTICIPANTS", config.get("use_participants", "да")).lower() == "да"
+            config["use_messages"] = os.getenv("USE_MESSAGES", config.get("use_messages", "да")).lower() == "да"
+            config["use_comments"] = os.getenv("USE_COMMENTS", config.get("use_comments", "да")).lower() == "да"
+            config["message_limit"] = int(os.getenv("MESSAGE_LIMIT", config.get("message_limit", 500)))
+            config["api_id"] = int(os.getenv("API_ID", config.get("api_id")))
+            config["api_hash"] = os.getenv("API_HASH", config.get("api_hash"))
+            config["phone_number"] = os.getenv("PHONE_NUMBER", config.get("phone_number"))
+            return config
     except Exception as e:
         print(f"Ошибка при загрузке config.json: {e}")
         exit(1)
@@ -33,7 +42,7 @@ def save_to_csv(users, folder_path):
     chunks = [users[i:i+50] for i in range(0, len(users), 50)]
     for idx, chunk in enumerate(chunks, 1):
         filename = os.path.join(folder_path, f"users_part_{idx}.csv")
-        with open(filename, "w", newline='', encoding="utf-8") as f:
+        with open(filename, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["username"])
             for user in chunk:
@@ -148,53 +157,43 @@ async def detect_spammers(client, entity, message_limit):
 
 async def main():
     config = load_config()
-    project_link = input("\U0001F517 Введите ссылку или username Telegram-группы: ").strip()
-    project_name = input("\U0001F4C2 Введите название проекта: ").strip()
+    project_link = config["project_link"]
+    project_name = config["project_name"]
     output_folder = create_output_folder(project_name)
 
-    use_participants = input("Собирать участников из вкладки 'Участники' (да/нет)? ").strip().lower() == 'да'
-    use_messages = input("Собирать пользователей из сообщений (да/нет)? ").strip().lower() == 'да'
-    use_comments = input("Собирать пользователей из комментариев (да/нет)? ").strip().lower() == 'да'
-    message_limit = int(input("Введите количество сообщений для анализа: ").strip())
-
     client = TelegramClient("session", config["api_id"], config["api_hash"])
-
     try:
         await client.start(config["phone_number"])
         entity = await client.get_entity(project_link)
-
         users = []
 
-        if use_participants:
+        if config["use_participants"]:
             try:
                 users += await get_participants(client, entity)
             except Exception as e:
                 save_error_log(output_folder, f"GetParticipantsRequest error: {e}")
 
-        if use_messages:
+        if config["use_messages"]:
             try:
-                users += await get_users_from_messages(client, entity, message_limit)
+                users += await get_users_from_messages(client, entity, config["message_limit"])
             except Exception as e:
                 save_error_log(output_folder, f"iter_messages error: {e}")
 
-        if use_comments:
+        if config["use_comments"]:
             try:
                 users += await get_users_from_comments(client, entity)
             except Exception as e:
                 save_error_log(output_folder, f"comments error: {e}")
 
         print(f"📦 Всего собранных пользователей: {len(users)}")
-
-        spammer_ids = await detect_spammers(client, entity, message_limit)
+        spammer_ids = await detect_spammers(client, entity, config["message_limit"])
         final_usernames = await filter_users(client, users, spammer_ids)
-
         save_to_csv(final_usernames, output_folder)
         print(f"✅ Сохранено {len(final_usernames)} username в: {output_folder}")
 
     except Exception as e:
         save_error_log(output_folder, f"Critical error: {e}")
         print(f"❌ Ошибка: {e}")
-
     finally:
         await client.disconnect()
 

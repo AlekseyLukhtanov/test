@@ -1,3 +1,2 @@
-python-telegram-bot==20.0
-telethon==1.28.5
-tqdm==4.66.2
+telethon
+tqdm
